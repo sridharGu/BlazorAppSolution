@@ -1,0 +1,13 @@
+create a table 
+
+CREATE TABLE [dbo].[Product] (
+    [Id]           INT  IDENTITY(1, 1)      NOT NULL,
+    [Product_Name] VARCHAR(50) NULL,
+    [Quntity]      INT        NULL,
+    [price]        MONEY      NULL,
+    PRIMARY KEY CLUSTERED ([Id] ASC)
+);
+
+database name TestingCrud
+
+  
