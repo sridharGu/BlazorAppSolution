@@ -1,0 +1,52 @@
+::: Create the xUnit test project within the “test” folder
+echo Creating xUnit test project “%TestProjectName%” in “test”…
+dotnet new xunit -o test/%TestProjectName% –framework net%DotnetVersion%
+
+::. Add the test project to the solution
+dotnet sln add test/%TestProjectName%/%TestProjectName%.csproj –solution-folder test
+
+::. Add project reference from the test project to the main project
+echo Adding project reference from “%TestProjectName%” to “%MainProjectName%”…
+dotnet add test/%TestProjectName%/%TestProjectName%.csproj reference “%MainProjectCsproj%”
+
+::. — Remove “src” and “test” Solution Folder references from .sln file and their EndProject lines
+echo Removing “src” and “test” Solution Folder references and their EndProject lines from “%SlnFile%”…
+
+::. Process the file line by line, skipping solution folder blocks
+setlocal EnableDelayedExpansion
+set “SkipNext=0”
+
+for /f “usebackq delims=” %%i in (”%SlnFile%”) do (
+set “line=%%i”
+set “WriteLine=1”
+
+```
+REM Check if this line starts a src or test solution folder
+echo !line! | findstr /r /c:"Project.*= \"src\", \"src\"," >nul && (
+    set "WriteLine=0"
+    set "SkipNext=1"
+)
+
+echo !line! | findstr /r /c:"Project.*= \"test\", \"test\"," >nul && (
+    set "WriteLine=0"
+    set "SkipNext=1"
+)
+
+REM Check if this is an EndProject line that should be skipped
+echo !line! | findstr /r /c:"^EndProject$" >nul && (
+    if !SkipNext! == 1 (
+        set "WriteLine=0"
+        set "SkipNext=0"
+    )
+)
+
+REM Write the line if it should not be skipped
+if !WriteLine! == 1 (
+    echo !line! >> "%TempSlnFile%"
+)
+```
+
+)
+
+::. Replace the original file
+move /Y “%TempSlnFile%” “%SlnFile%”
