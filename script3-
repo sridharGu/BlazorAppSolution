@@ -1,0 +1,225 @@
+#Deploy template
+#Deployment Template usind based environment variables:
+
+#Define a set of common shareable functions to help in deployment
+.copy_appoffline_commands: &copy_appoffline_commands
+- |
+    #Global Variable used for the file name    
+    $appOfflineFilename = "app_offline.htm"
+        
+    function Copy-App-Offline 
+    {
+        param($deployPath)
+
+        #$filepath = $env:DEPLOY_PATH_SERVER
+        if (Test-Path $deployPath) 
+        {
+            echo "Copy-App-Offline: Deploy path exists: $deployPath"
+                                  
+            echo "ProjectRoot: $PROJECT_ROOT"
+            $appOfflinePathSource = Join-Path -Path $PROJECT_ROOT -ChildPath $appOfflineFilename
+            $appOfflinePathDestination = Join-Path -Path $deployPath -ChildPath $appOfflineFilename
+            
+            echo "Copy-App-Offline: Checking if app_offline.htm exists at $appOfflinePathSource"
+            if (Test-Path $appOfflinePathSource) 
+            {            
+                Copy-Item $appOfflinePathSource -Destination $deployPath
+                #Sleep for 2 seconds to give the file time to take effect and shutdown the processes so the files can be deleted successfully.
+                Start-Sleep 20
+                echo "Copy-App-Offline: $appOfflineFilename copied to $deployPath"               
+            }
+            else 
+            {
+                echo "$appOfflinePathSource not found. Skipping copy."                
+            }
+        } 
+        else 
+        {            
+            throw "Error: File path does not exist: $deployPath"
+        }
+    }
+
+    #Delete the app_offline file
+    function Delete-App-Offline 
+    {
+        param($appOfflinePathToDelete)
+
+        echo "Removing: $appOfflinePathToDelete"
+        if (Test-Path $appOfflinePathToDelete) 
+        {            
+            Remove-Item -path $appOfflinePathToDelete
+            echo "$appOfflinePathToDelete deleted."
+        }
+        else 
+        {
+            echo "$appOfflinePathToDelete did not exist to delete."
+        }
+    }
+
+    function Delete-All-Files-SubFolders
+    {
+        param($pathToDelete)
+
+        echo "Filepath to Delete: $pathToDelete"
+       
+        $webconfigFile = "web.config"
+        #Use a loop to attempt deleting 3 times and then bail out if it doesn't succeed after 3 times.  This is because the delete command has issues recursing through folders
+        $deleteAttempts = 1
+        
+        #if app_offline.htm doesn't exist in the project, then we want to delete all files except web.config, which we will overwrite to release the application file locks. 
+        $maxNumberOfFilesRemaining = 1                
+        $exclusionOption = $webconfigFile
+
+        $appOfflinePathDestination = Join-Path -Path $pathToDelete -ChildPath $appOfflineFilename  
+        if (Test-Path $appOfflinePathDestination) 
+        {
+            #If app_offline.htm exists, we have 2 files remaining and not to be deleted.
+            #NOTE: Be sure to wrap each file name in quotes, otherwise it won't work and be careful not to use \ because you might accidentally go up a directory and delete.
+            $exclusionOption = "$webconfigFile","$appOfflineFilename"
+            $maxNumberOfFilesRemaining = 2                  
+        }
+        else
+        {
+            #Overwrite web.config with a blank file to reset the application and release locks and keep the application down so files can be deleted.
+            $webconfigPath = Join-Path -Path $pathToDelete -ChildPath $webconfigFile
+            New-Item $webconfigPath -ItemType File -Force
+        }
+
+        echo "Max number of files: $maxNumberOfFilesRemaining"
+        echo "Exclusion Files: $exclusionOption"
+
+        echo "Begin - Deleting files before deployment"
+
+        $maxAttempts = 3
+        #loop until the max files remaining are reached or the attempts goes over the limit.
+        while ( ((Get-ChildItem $pathToDelete | Measure-Object).count -gt $maxNumberOfFilesRemaining) -and ($deleteAttempts -le $maxAttempts) )
+        {
+            echo "Delete Attempt $deleteAttempts of $maxAttempts"
+            #Increment before the error occurs.
+            $deleteAttempts++
+            Start-Sleep 20
+            #Added the Exclude flag to not delete the specified files.  We never want to remove web.config otherwise iis doesn't recognize the folder as being a website.
+            #Important: Had to add -ErrorAction Continue to both commands below for the delete process to succeed properly.  Sometimes network errors caused process to fail.
+            Get-ChildItem -ErrorAction Continue -Path $pathToDelete -Recurse -Exclude $exclusionOption | Remove-Item -ErrorAction Continue -Force -Recurse                
+        }
+
+        if ($deleteAttempts -gt $maxAttempts)
+        {            
+            throw "Error: Files could not be deleted, too many delete attempts failed."
+        }
+        else
+        {
+            echo "Files deleted."
+        }
+
+        echo "End - Deleting files before deployment"
+    }
+
+.deployment-template:
+  extends:
+    
+    - .cache-common
+    - .before-script-common
+   
+  #stage: deployment
+  variables:
+    GIT_STRATEGY: fetch
+    GIT_CHECKOUT: "false"
+           
+
+  script:
+    - *copy_appoffline_commands
+    - echo "Deploying to $ENVIRONMENT..."
+    - |
+        $filepath = $env:DEPLOY_PATH_SERVER
+        if (Test-Path $filepath) 
+        {
+            echo "File path exists: $filepath"
+                             
+            Copy-App-Offline($filepath)
+                            
+            $EnvironmentName = $env:ENVIRONMENT
+          
+            echo "Filepath: $filepath"          
+            Delete-All-Files-SubFolders($filepath)
+
+            echo "Deploying server application..."
+            try
+            {                                       
+                dotnet publish $env:SERVER_PROJECT --no-restore -c release -p:EnvironmentName=$EnvironmentName -o $filepath /property:WarningLevel=0
+                 
+                #delete the app_offline.htm file after publish. If it didn't succeed then leave it offline for now.
+                $appOfflinePathDestination = Join-Path -Path $filepath -ChildPath $appOfflineFilename                                                  
+                Delete-App-Offline($appOfflinePathDestination)
+
+                if ($LASTEXITCODE -ne 0) 
+                {
+                    throw "Error: Failed to publish .NET project."
+                }
+                else
+                {
+                    echo "Server application successfully deployed to $ENVIRONMENT."
+                }
+            }
+            catch
+            {
+                echo "Deployment failed."
+                Write-Error $_
+                exit 1
+            }
+
+            # if API(Server) and web(Client) project need to deploy to separate directories
+            echo "*****************************************************************"
+            echo "Deploy Client Path:$DEV_PATH_CLIENT"            
+            $filepath = $env:DEPLOY_PATH_CLIENT
+            echo "Filepath: $filepath"
+
+            if ($IS_PROJ_API_REQD_TO_DEPLOY -eq 'Y' -and (Test-Path $filepath) ) 
+            {
+                echo "File path exists: $filepath"
+                                
+                echo "Environment: $EnvironmentName"
+
+                Copy-App-Offline($filepath)
+
+                echo "delete client project files before deployment"
+                Delete-All-Files-SubFolders($filepath)
+                
+                echo "Deploying client application..."                
+                try
+                {
+                    dotnet publish $CLIENT_PROJECT --no-restore -c release -p:EnvironmentName=$EnvironmentName -o $filepath /property:WarningLevel=0 
+
+                    #delete the app_offline.htm file after publish. If it didn't succeed then leave it offline for now.
+                    $appOfflinePathDestination = Join-Path -Path $filepath -ChildPath $appOfflineFilename                                                  
+                    Delete-App-Offline($appOfflinePathDestination)
+             
+                    if ($LASTEXITCODE -ne 0) 
+                    {
+                        throw "Error: Failed to publish the project."
+                    }
+                    else
+                    {
+                        echo "Client application successfully deployed to $EnvironmentName."
+                    }
+                }
+                catch
+                {
+                    echo "Deployment failed."
+                    Write-Error $_                    
+                    exit 1
+                }
+            }
+            else
+            {
+                echo "File path ($filepath) does not exist or project isn't required to deploy the Web and API project separately" 
+            }           
+        }
+        else 
+        {
+            echo "File path does not exist: $filepath"
+            exit 1
+        }
+
+  after_script:
+    - echo "Deployment to $ENVIRONMENT complete"
