@@ -1,0 +1,493 @@
+@echo off
+setlocal
+setlocal EnableDelayedExpansion
+
+:: This script creates a new Visual Studio solution with "src" and "test" folders
+:: and adds projects targeting a specified .NET version.
+
+:: Usage:
+::   create_Sample_Proj_Template.bat <SolutionName> <ProjectType> <DotnetVersion>
+
+:: Example:
+::   create_Sample_Proj_Template.bat MySampleApp mvc 8.0
+::   create_Sample_Proj_Template.bat MyBlazorApp blazor 8.0
+::   create_Sample_Proj_Template.bat MyWasmApp blazorwasm 8.0
+::   create_Sample_Proj_Template.bat MyApi webapi 8.0
+
+
+:: Check for the correct number of arguments
+if "%~1"=="" goto usage
+if "%~2"=="" goto usage
+if "%~3"=="" goto usage
+
+c:
+:: Assign arguments to variables
+set "SolutionName=%~1"
+set "ProjectType=%~2"
+set "DotnetVersion=%~3"
+
+:: Define the base repository path
+set "BasePath=C:\Users\%USERNAME%\source\repos"
+set "SolutionPath=%BasePath%\%SolutionName%"
+
+
+:: Derive project names
+set "MainProjectName=%SolutionName%.Web"  :: Conventionally adds .Web, adjust if not needed for all types
+set "TestProjectName=%SolutionName%.Tests"
+set "SlnFile=%SolutionPath%\%SolutionName%.sln"
+set "TempSlnFile=%SolutionPath%\%SolutionName%.sln.tmp"
+
+echo Creating solution folder at "%SolutionPath%"...
+
+:: Create the solution directory
+mkdir "%SolutionPath%"
+if errorlevel 1 (
+    echo Error: Could not create directory "%SolutionPath%". It might already exist or you lack permissions.
+    goto :eof
+)
+
+:: Navigate into the solution folder
+cd "%SolutionPath%"
+
+echo Creating solution "%SolutionName%"...
+
+:: Create the solution file
+dotnet new sln -n "%SolutionName%"
+
+:: Create the .gitignore file
+echo Creating .gitignore file...
+dotnet new gitignore
+
+:: Create the "src" folder
+mkdir src
+
+:: --- Create the main project based on ProjectType ---
+echo Creating main project "%MainProjectName%" (Type: "%ProjectType%", Version: "%DotnetVersion%") in "src"...
+
+:: Use an IF statement to determine the project type
+if /i "%ProjectType%"=="blazor" (
+    dotnet new blazor -o src/%MainProjectName% --framework net%DotnetVersion%
+    set "MainProjectCsproj=src/%MainProjectName%/%MainProjectName%.csproj"
+) else if /i "%ProjectType%"=="blazorwasm" (
+    dotnet new blazorwasm -o src/%MainProjectName% --framework net%DotnetVersion%
+    set "MainProjectCsproj=src/%MainProjectName%/%MainProjectName%.csproj"
+) else if /i "%ProjectType%"=="webapi" (
+    dotnet new webapi -o src/%MainProjectName% --framework net%DotnetVersion%
+    set "MainProjectCsproj=src/%MainProjectName%/%MainProjectName%.csproj"
+) else if /i "%ProjectType%"=="mvc" (
+    dotnet new mvc -o src/%MainProjectName% --framework net%DotnetVersion%
+    set "MainProjectCsproj=src/%MainProjectName%/%MainProjectName%.csproj"
+) else (
+    echo Error: Unknown ProjectType "%ProjectType%". Supported types: mvc, blazor, blazorwasm, webapi.
+    goto :eof
+)
+
+:: Add the main project to the solution
+ dotnet sln add "%MainProjectCsproj%" --solution-folder src
+
+:: Create the "test" folder
+mkdir test
+
+:: Create the xUnit test project within the "test" folder
+echo Creating xUnit test project "%TestProjectName%" in "test"...
+dotnet new xunit -o test/%TestProjectName% --framework net%DotnetVersion%
+
+:: Add the test project to the solution
+ dotnet sln add test/%TestProjectName%/%TestProjectName%.csproj --solution-folder test
+
+:: Add project reference from the test project to the main project
+echo Adding project reference from "%TestProjectName%" to "%MainProjectName%"...
+dotnet add test/%TestProjectName%/%TestProjectName%.csproj reference "%MainProjectCsproj%"
+
+:: --- Remove "src" and "test" Solution Folder references from .sln file and their EndProject lines ---
+echo Removing "src" and "test" Solution Folder references and their EndProject lines from "%SlnFile%"...
+
+
+:: Remove "src" folder entry
+::findstr /V /R /C:"Project(\"{.*}\") = \"src\", \"src\", \"{.*}\"" "%SlnFile%" > "%TempSlnFile%"
+::findstr /V /R /C:"\{.*\} = \{.*\}" "%SlnFile%" > "%TempSlnFile%"
+::move /Y "%TempSlnFile%" "%SlnFile%"
+
+:: Now remove the associated "EndProject" line for the "src" solution folder
+::findstr /V /R /C:"EndProject" "%SlnFile%" > "%TempSlnFile%"
+::move /Y "%TempSlnFile%" "%SlnFile%"
+
+:: Remove "test" folder entry
+::findstr /V /R /C:"Project(\"{.*}\") = \"test\", \"test\", \"{.*}\"" "%SlnFile%" > "%TempSlnFile%"
+::move /Y "%TempSlnFile%" "%SlnFile%"
+cd "%SolutionPath%"
+@echo off
+setlocal enabledelayedexpansion
+
+
+set "backupFile=%slnFile%.bak"
+copy "%slnFile%" "%backupFile%" >nul
+
+set "tempFile=%slnFile%.tmp"
+> "%tempFile%" (
+    set "skipBlock=false"
+	set "skipBlock1=false"
+    for /f "usebackq delims=" %%A in ("%slnFile%") do (
+        set "line=%%A"
+        echo !line! | findstr /r /C:"Project(\"{.*}\") = \"src\", \"src\", \"{.*}\"" >nul
+        if !errorlevel! == 0 (
+            set "skipBlock=true"
+        )
+        echo !line! | findstr /r /C:"Project(\"{.*}\") = \"test\", \"test\", \"{.*}\"" >nul
+        if !errorlevel! == 0 (
+            set "skipBlock=true"
+        )
+				
+		echo !line! | findstr /v /r /C:"{.*} = {.*}" >nul
+		 if !errorlevel! == 0 (
+           set "skipBlock1=true"
+
+        )	
+		
+		
+        if "!skipBlock!"=="true" (
+            echo !line! | findstr /C:"EndProject" >nul
+            if !errorlevel! == 0 (
+                set "skipBlock=false"
+            )
+        ) else (
+
+            echo !line!
+        )
+		
+		
+    )
+)
+
+move /Y "%tempFile%" "%slnFile%" >nul
+
+REM Clean up
+del "%backupFile%"
+
+
+echo Projects "src" and "test" removed from solution file.
+endlocal
+
+
+
+
+:: Now remove the associated "EndProject" line for the "test" solution folder
+::findstr /V /R /C:"EndProject" "%SlnFile%" > "%TempSlnFile%"
+::move /Y "%TempSlnFile%" "%SlnFile%"
+
+REM Read the original file line by line
+::for /f "delims=" %%i in ('type "%SlnFile%"') do (
+::   set "line=%%i"
+::    echo !line! >> "%TempSlnFile%"
+    REM Check if the line contains the "Project" text
+::    echo !line! | findstr /i /c:"Project\" >nul && (
+::        echo EndProject >> "%TempSlnFile%"
+::    )
+::)
+
+::. Process the file line by line, skipping solution folder blocks
+::setlocal EnableDelayedExpansion
+::set "SkipNext=0"
+
+::for /f "usebackq delims=" %%i in ("%SlnFile%") do (
+::set "line=%%i"
+::set "WriteLine=1"
+
+```
+REM Check if this line starts a src or test solution folder
+::echo !line! | findstr /r /c:"Project.*= \"src\", \"src\"," >nul && (
+::    set "WriteLine=0"
+::    set "SkipNext=1"
+::)
+
+::echo !line! | findstr /r /c:"Project.*= \"test\", \"test\"," >nul && (
+::    set "WriteLine=0"
+::    set "SkipNext=1"
+::)
+
+REM Check if this is an EndProject line that should be skipped
+::echo !line! | findstr /r /c:"^EndProject$" >nul && (
+::    if !SkipNext! == 1 (
+::        set "WriteLine=0"
+::        set "SkipNext=0"
+::    )
+::)
+
+REM Write the line if it should not be skipped
+::if !WriteLine! == 1 (
+::    echo !line! >> "%TempSlnFile%"
+::)
+
+::)
+
+
+
+
+
+REM Replace the original file with the new one
+::move /y "%TempSlnFile%" "%SlnFile%"
+
+
+
+cd ../..
+
+:: Copy all files and folders from C:\Example to the solution directory
+echo Copying contents of C:\Example to "%SolutionPath%"...
+xcopy "\\Sample-templates\Example\Standard" "%SolutionPath%" /E /s /y
+
+
+set "CSS_SOURCE_DIR=\\Sample-templates\ExampleCss"
+set "PROJECT_ROOT=.\"
+
+cd "%SolutionPath%"
+
+echo Searching for wwwroot in "%PROJECT_ROOT%\"...
+echo.
+
+REM Use 'FOR /R' to recursively search the project root for the 'wwwroot' folder
+for /r "%SolutionPath%" %%d in (wwwroot) do (
+    if exist "%%d" (
+        set "TARGET_DIR_ROOT=%%d"
+        goto :copy_files
+    )
+)
+
+echo ERROR: The 'wwwroot' folder was not found in "%PROJECT_ROOT%".
+goto :end
+
+:copy_files
+echo Found wwwroot at: "%TARGET_DIR_ROOT%"
+echo Copying all files and subfolders from "%SOURCE_DIR%" to "%TARGET_DIR_ROOT%"...
+echo.
+
+
+xcopy "%CSS_SOURCE_DIR%" "%TARGET_DIR_ROOT%" /S /E /I /Y
+
+if %errorlevel% neq 0 (
+    echo.
+    echo ERROR: An error occurred during the copy process.
+) else (
+    echo.
+    echo Files copied successfully!
+)
+
+
+:: Copy all files and folders from C:\Example to the solution directory
+echo Copying contents of C:\Example to "%SolutionPath%"...
+xcopy "\\Sample-templates\Example\Standard" "%SolutionPath%" /E /s /y
+
+:: copy navigation files 
+
+set "NAV_SOURCE_DIR=\\Sample-templates\ExampleNav/Layout"
+set "PROJECT_ROOT=.\"
+
+echo Searching for wwwroot in "%PROJECT_ROOT%\"...
+echo.
+
+TIMEOUT /T 2 /NOBREAK
+setlocal DisableDelayedExpansion
+
+if /i "%ProjectType%"=="mvc" goto :endofFile
+
+endlocal
+
+REM Use 'FOR /R' to recursively search the project root for the 'layout' folder
+for /r "%SolutionPath%" %%d in (Layout) do (
+    if exist "%%d" (
+        set "TARGET_DIR=%%d"
+        goto :copy_files
+    )
+)
+
+echo ERROR: The 'layout' folder was not found in "%PROJECT_ROOT%".
+goto :end
+
+:copy_files
+echo Found layout at: "%TARGET_DIR%"
+echo Copying all files and subfolders from "%NAV_SOURCE_DIR%" to "%TARGET_DIR%"...
+echo.
+
+REM XCOPY command to copy the files
+
+xcopy "%NAV_SOURCE_DIR%" "%TARGET_DIR%" /S /E /I /Y
+
+if %errorlevel% neq 0 (
+    echo.
+    echo ERROR: An error occurred during the copy process.
+) else (
+    echo.
+    echo Files copied successfully!
+)
+
+echo Set paths
+
+echo Searching for css in "%SolutionPath%"
+
+
+
+::for /R %%f in (App.razor) do (
+::    echo Found: %%~dpnxf
+::)
+
+REM Use 'FOR /R' to recursively search the project root for the 'layout' folder
+for /r "%SolutionPath%" %%d in (Components) do (
+    if exist "%%d" (
+        set "TARGET_DIR_COMP=%%d"
+        goto :foundcomp
+    )
+)
+
+:foundcomp
+    if defined TARGET_DIR_COMP (
+        echo The path to components is: %TARGET_DIR_COMP%
+    ) else (
+        echo components not found.
+    )
+
+TIMEOUT /T 2 /NOBREAK
+
+
+setlocal DisableDelayedExpansion
+if /i "%ProjectType%"=="blazor" (
+
+
+rem Find and delete the Counter.razor and Weather.razor pages
+echo Find and delete
+del "%TARGET_DIR_COMP%\Pages\Counter.razor"
+del "%TARGET_DIR_COMP%\Pages\Weather.razor"
+
+)
+endlocal
+
+:: new lines 
+
+set "APP_RAZOR_PATH=%TARGET_DIR_COMP%\App.razor"
+::set "CSS_DIR=wwwroot\css"
+
+echo Adding CSS references to %APP_RAZOR_PATH%...
+
+REM Check if App.razor exists
+if not exist "%APP_RAZOR_PATH%" (
+    echo Error: %APP_RAZOR_PATH% not found.
+    exit /b 1
+)
+
+REM Find the closing </head> tag and insert before it
+for /f "delims=" %%i in ('findstr /n /r "<head>" "%APP_RAZOR_PATH%"') do (
+    set "line=%%i"
+    set "lineNum=!line:~0,1!"
+    goto :found_head
+)
+echo info:lineNum
+echo Error: <head> tag not found in %APP_RAZOR_PATH%.
+exit /b 1
+
+:found_head
+set /a insert_point=%lineNum% + 3
+echo insert point: !insert_point!
+
+REM Create a temporary file for modifications
+set "TEMP_APP_RAZOR=%SolutionPath%\App_temp.razor"
+::copy "%APP_RAZOR_PATH%" "%TEMP_APP_RAZOR%" > nul
+
+echo temp path:%TEMP_APP_RAZOR%
+
+
+
+set "currentLine=0"
+REM Iterate through CSS files and add references
+:: (
+::  for /f "delims=" %%i in ('type "%APP_RAZOR_PATH%"') do (
+::     set /a currentLine+=1
+::    echo %%i
+::	 echo sample
+::       if !currentLine! equ !insert_point!(   
+::    )
+::) > "%TEMP_APP_RAZOR%"
+  
+(for /f "delims=" %%i in ('type "%APP_RAZOR_PATH%"') do (
+    set /a currentLine+=1
+	 if !currentLine! equ 1 (
+	    setlocal DisableDelayedExpansion
+         echo ^<!doctype html^>
+		 endlocal
+	           
+	    ) else (
+		
+               echo %%i
+	       )
+    if !currentLine! equ !insert_point! (
+	   ::echo sample22
+	   for /r "%TARGET_DIR_ROOT%\css" %%f in ("*.css") do (
+              
+			  
+                ::echo setting up
+				set css_file=%%~nxf
+				
+				::echo %%~nxf
+				::echo css file: !css_file!
+				::set "css_path=css/!css_file!"
+				::	TIMEOUT /T 1 /NOBREAK 
+				
+				echo ^<link href="css/!css_file!" rel="stylesheet" /^>
+        )
+	)
+)) > "%TEMP_APP_RAZOR%"
+ 
+
+REM Replace original App.razor
+move /y "%TEMP_APP_RAZOR%" "%APP_RAZOR_PATH%" > nul
+
+
+echo root path:%TARGET_DIR_ROOT% 
+
+TIMEOUT /T 1 /NOBREAK
+
+set DIR_ROOT =%TARGET_DIR_ROOT%
+
+@ECHO OFF
+::setlocal EnableDelayedExpansion
+
+	TIMEOUT /T 1 /NOBREAK
+
+for %%f in ("%TARGET_DIR_ROOT%\css\*.css") do (
+               
+			  
+                ::echo setting up
+				set css_file=%%~nxf
+				
+				::echo %%~nxf
+				::echo css file: !css_file!
+				::set "css_path=css/!css_file!"
+				::	TIMEOUT /T 1 /NOBREAK 
+				
+				echo Adding: ^<link href="css/!css_file!" rel="stylesheet" /^>
+)
+
+echo CSS references added successfully.
+:endofFile
+
+
+
+
+
+echo Solution and projects created successfully at "%SolutionPath%"!
+echo You can now open "%SolutionPath%\%SolutionName%.sln" in Visual Studio.
+
+endlocal
+goto :eof
+
+echo.
+echo Solution setup for "%SolutionName%" is complete.
+echo.
+
+
+:usage
+echo.
+echo Usage: create_Sample_Proj_Template.bat ^<SolutionName^> ^<ProjectType^> ^<DotnetVersion^>
+echo   ^<SolutionName^>: The name for the new solution.
+echo   ^<ProjectType^>: The project template to use (mvc, blazor, blazorwasm, webapi).
+echo   ^<DotnetVersion^>: The .NET version to target (e.g., 8.0).
+echo.
+echo Example: create_Sample_Proj_Template.bat MyCoolApp mvc 8.0
+goto :eof
